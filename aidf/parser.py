@@ -10,7 +10,7 @@ import xml.etree.ElementTree as ET
 from typing import List, Dict, Any, Optional
 
 from aidf.models import (
-    Node, TextNode, SectionNode, MediaImageNode, MediaVideoNode,
+    Node, TextNode, ParagraphNode, ReferenceNode, SectionNode, MediaImageNode, MediaVideoNode,
     DataTableNode, TableColumn, MathNode, UntrustedDataNode,
     ToolActionNode, EntityNode, Document
 )
@@ -96,13 +96,17 @@ class AIDFParser:
             title = attrib.get("title", "")
             children = []
             if elem.text and elem.text.strip():
-                children.append(TextNode(text=elem.text.strip(), prio=prio))
+                s_text = elem.text.strip() if len(elem) == 0 else elem.text.lstrip("\r\n")
+                if s_text:
+                    children.append(TextNode(text=s_text, prio=prio))
             for child in elem:
                 c_node = AIDFParser._parse_element(child)
                 if c_node:
                     children.append(c_node)
                 if child.tail and child.tail.strip():
-                    children.append(TextNode(text=child.tail.strip(), prio=prio))
+                    t_text = child.tail.strip() if len(elem) == 0 else child.tail.rstrip("\r\n")
+                    if t_text:
+                        children.append(TextNode(text=t_text, prio=prio))
             return SectionNode(id=node_id, prio=prio, title=title, children=children)
 
         elif tag == "media_img":
@@ -188,9 +192,50 @@ class AIDFParser:
             entity_type = attrib.get("type", "UNKNOWN")
             return EntityNode(id=node_id, prio=prio, name=name, entity_type=entity_type, metadata=dict(attrib))
 
-        elif tag == "p":
+        elif tag == "ref":
+            target = attrib.get("target", "")
+            rel = attrib.get("rel", "citation")
             text = (elem.text or "").strip()
-            return TextNode(id=node_id, prio=prio, text=text)
+            return ReferenceNode(id=node_id, prio=prio, target=target, rel=rel, text=text)
+
+        elif tag == "code":
+            text = elem.text or ""
+            return TextNode(id=node_id, prio=prio, text=text, attrs={"tag": "code"})
+
+        elif tag == "p":
+            if len(elem) == 0:
+                text = (elem.text or "").strip()
+                return ParagraphNode(id=node_id, prio=prio, text=text, children=[])
+
+            children: List[Node] = []
+            text_parts: List[str] = []
+
+            if elem.text:
+                p_text = elem.text.lstrip("\r\n")
+                if p_text:
+                    children.append(TextNode(text=p_text, prio=prio))
+                    text_parts.append(p_text)
+
+            for child in elem:
+                c_node = AIDFParser._parse_element(child)
+                if c_node:
+                    children.append(c_node)
+                    if isinstance(c_node, ReferenceNode):
+                        text_parts.append(c_node.text)
+                    elif isinstance(c_node, TextNode):
+                        text_parts.append(c_node.text)
+                    elif isinstance(c_node, EntityNode):
+                        text_parts.append(c_node.name)
+                    elif hasattr(c_node, "text"):
+                        text_parts.append(getattr(c_node, "text", ""))
+                if child.tail:
+                    t_text = child.tail.rstrip("\r\n")
+                    if t_text:
+                        children.append(TextNode(text=t_text, prio=prio))
+                        text_parts.append(t_text)
+
+            full_text = "".join(text_parts)
+            return ParagraphNode(id=node_id, prio=prio, text=full_text, children=children)
 
         return None
 
@@ -220,12 +265,39 @@ class AIDFSerializer:
         return "\n".join(lines)
 
     @staticmethod
+    def _serialize_inline(node: Node) -> str:
+        if isinstance(node, ReferenceNode):
+            rel_str = f' rel="{node.rel}"' if node.rel and node.rel != "citation" else ""
+            id_str = f' id="{node.id}"' if node.id else ""
+            return f'<ref{id_str} target="{node.target}"{rel_str}>{node.text}</ref>'
+        elif isinstance(node, EntityNode):
+            id_str = f' id="{node.id}"' if node.id else ""
+            return f'<ent{id_str} type="{node.entity_type}">{node.name}</ent>'
+        elif isinstance(node, TextNode):
+            return node.text
+        return getattr(node, "text", "")
+
+    @staticmethod
     def _serialize_node(node: Node, depth: int = 1) -> str:
         sp = "  " * depth
-        if isinstance(node, TextNode):
+        if isinstance(node, ParagraphNode) or (isinstance(node, TextNode) and getattr(node, "children", None)):
+            if node.children:
+                inner = "".join(AIDFSerializer._serialize_inline(child) for child in node.children)
+            else:
+                inner = node.text
+            if node.id:
+                return f'{sp}<p id="{node.id}" prio={node.prio}>{inner}</p>'
+            return f'{sp}<p prio={node.prio}>{inner}</p>'
+
+        elif isinstance(node, TextNode):
             if node.id:
                 return f'{sp}<p id="{node.id}" prio={node.prio}>{node.text}</p>'
             return f"{sp}{node.text}"
+
+        elif isinstance(node, ReferenceNode):
+            rel_str = f' rel="{node.rel}"' if node.rel and node.rel != "citation" else ""
+            id_str = f' id="{node.id}"' if node.id else ""
+            return f'{sp}<ref{id_str} target="{node.target}"{rel_str}>{node.text}</ref>'
 
         elif isinstance(node, SectionNode):
             lines = [f'{sp}<sec id="{node.id or ""}" title="{node.title}" prio={node.prio}>']

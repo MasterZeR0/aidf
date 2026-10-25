@@ -1,4 +1,7 @@
-from aidf.models import Document, SectionNode, MediaImageNode, DataTableNode, TableColumn, TextNode
+from aidf.models import (
+    Document, SectionNode, MediaImageNode, DataTableNode, TableColumn,
+    TextNode, ParagraphNode, ReferenceNode
+)
 from aidf.parser import AIDFParser, AIDFSerializer
 
 def test_full_pipeline():
@@ -51,5 +54,40 @@ def test_full_pipeline():
 
     print("✅ All AIDF AST, parsing, pruning, and serialization tests passed!")
 
+
+def test_mixed_content_paragraph():
+    markup = '<doc id="test-mixed"><p>Cloud grew <ref target="tbl-1">15%</ref> this quarter.</p></doc>'
+    doc = AIDFParser.parse(markup)
+    assert doc.id == "test-mixed"
+    assert len(doc.children) == 1
+
+    p = doc.children[0]
+    assert isinstance(p, (ParagraphNode, TextNode))
+    assert len(p.children) == 3
+
+    # Check child nodes and preserved text
+    assert isinstance(p.children[0], TextNode)
+    assert p.children[0].text == "Cloud grew "
+
+    assert isinstance(p.children[1], ReferenceNode)
+    assert p.children[1].target == "tbl-1"
+    assert p.children[1].text == "15%"
+    assert p.children[1].rel == "citation"
+
+    assert isinstance(p.children[2], TextNode)
+    assert p.children[2].text == " this quarter."
+
+    # Full text preservation without truncation
+    assert p.text == "Cloud grew 15% this quarter."
+
+    # Serialization roundtrip preserves reference tag and text
+    serialized = AIDFSerializer.serialize(doc)
+    assert '<ref target="tbl-1">15%</ref>' in serialized
+    assert "Cloud grew " in serialized
+    assert " this quarter." in serialized
+    print("✅ Mixed content paragraph parsing & reference node test passed!")
+
+
 if __name__ == "__main__":
     test_full_pipeline()
+    test_mixed_content_paragraph()

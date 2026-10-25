@@ -14,6 +14,7 @@ class Node:
     id: Optional[str] = None
     prio: int = 1  # 1 = critical, 2 = normal, 3 = elidable
     attrs: Dict[str, Any] = field(default_factory=dict)
+    untrusted: bool = False
 
     def prune(self, max_prio: int) -> Optional[Node]:
         """Return pruned node, or None if pruned out."""
@@ -23,9 +24,46 @@ class Node:
 
 
 @dataclass
+class ReferenceNode(Node):
+    """Inline reference or citation node."""
+    target: str = ""
+    rel: str = "citation"
+    text: str = ""
+
+
+@dataclass
 class TextNode(Node):
     """Raw text content."""
     text: str = ""
+    children: List[Node] = field(default_factory=list)
+
+    def prune(self, max_prio: int) -> Optional[TextNode]:
+        if self.prio > max_prio:
+            return None
+        pruned_children = []
+        for child in self.children:
+            p = child.prune(max_prio)
+            if p is not None:
+                pruned_children.append(p)
+        return type(self)(
+            id=self.id,
+            prio=self.prio,
+            attrs=self.attrs,
+            text=self.text,
+            children=pruned_children
+        )
+
+
+@dataclass
+class ParagraphNode(TextNode):
+    """Paragraph container supporting mixed inline text, references, and entities."""
+    inline_children: List[Node] = field(default_factory=list)
+
+    def __post_init__(self):
+        if self.inline_children and not self.children:
+            self.children = self.inline_children
+        elif self.children and not self.inline_children:
+            self.inline_children = self.children
 
 
 @dataclass
@@ -46,6 +84,7 @@ class SectionNode(Node):
             id=self.id,
             prio=self.prio,
             attrs=self.attrs,
+            untrusted=self.untrusted,
             title=self.title,
             children=pruned_children
         )
@@ -99,6 +138,7 @@ class UntrustedDataNode(Node):
     source: str = ""
     sandbox: str = "read-only"
     content: str = ""
+    untrusted: bool = True
 
 
 @dataclass
@@ -137,5 +177,6 @@ class Document(Node):
             lang=self.lang,
             metadata=self.metadata,
             attrs=self.attrs,
+            untrusted=self.untrusted,
             children=pruned_children
         )

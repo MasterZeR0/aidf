@@ -6,7 +6,7 @@ Eliminates gratuitous indentation spaces and empty closures when serializing for
 from __future__ import annotations
 import json
 from aidf.models import (
-    Node, TextNode, SectionNode, MediaImageNode, MediaVideoNode,
+    Node, TextNode, ParagraphNode, ReferenceNode, SectionNode, MediaImageNode, MediaVideoNode,
     DataTableNode, MathNode, UntrustedDataNode, ToolActionNode,
     EntityNode, Document
 )
@@ -30,8 +30,30 @@ class CompactAIDFSerializer:
         return "\n".join(out)
 
     @staticmethod
+    def _serialize_inline(node: Node) -> str:
+        if isinstance(node, ReferenceNode):
+            rel_str = f' rel="{node.rel}"' if node.rel and node.rel != "citation" else ""
+            id_str = f' id="{node.id}"' if node.id else ""
+            return f'<ref{id_str} target="{node.target}"{rel_str}>{node.text}</ref>'
+        elif isinstance(node, EntityNode):
+            id_str = f' id="{node.id}"' if node.id else ""
+            return f'<ent{id_str} type="{node.entity_type}">{node.name}</ent>'
+        elif isinstance(node, TextNode):
+            return node.text
+        return getattr(node, "text", "")
+
+    @staticmethod
     def _serialize_node(node: Node) -> str:
-        if isinstance(node, TextNode):
+        if isinstance(node, ParagraphNode) or (isinstance(node, TextNode) and getattr(node, "children", None)):
+            if node.children:
+                inner = "".join(CompactAIDFSerializer._serialize_inline(child) for child in node.children)
+            else:
+                inner = node.text
+            if node.id:
+                return f'<p id="{node.id}" prio={node.prio}>{inner}</p>'
+            return f'<p prio={node.prio}>{inner}</p>'
+
+        elif isinstance(node, TextNode):
             if node.id:
                 return f'<p id="{node.id}" prio={node.prio}>{node.text}</p>'
             return node.text
@@ -94,5 +116,10 @@ class CompactAIDFSerializer:
 
         elif isinstance(node, EntityNode):
             return f'<ent id="{node.id or ""}" type="{node.entity_type}" prio={node.prio}>{node.name}</ent>'
+
+        elif isinstance(node, ReferenceNode):
+            rel_str = f' rel="{node.rel}"' if node.rel and node.rel != "citation" else ""
+            id_str = f' id="{node.id}"' if node.id else ""
+            return f'<ref{id_str} target="{node.target}"{rel_str}>{node.text}</ref>'
 
         return ""
