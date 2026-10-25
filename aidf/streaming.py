@@ -26,6 +26,7 @@ class AIDFStreamingParser:
     """
     Incremental streaming tokenizer & parser for AIDF token streams.
     Fires callbacks as soon as a complete semantic block (p, sec, action:tool, data:table) closes.
+    Uses index-based slicing to avoid buffer corruption and supports multiple blocks per chunk.
     """
 
     def __init__(self, on_node_closed: Optional[Callable[[Node], None]] = None,
@@ -46,15 +47,29 @@ class AIDFStreamingParser:
             (r'(<action:tool\b[^>]*>.*?</action:tool>)', "action_tool"),
             (r'(<data:table\b[^>]*>.*?</data:table>)', "data_table"),
             (r'(<media:img\b[^>]*>.*?</media:img>)', "media_img"),
+            (r'(<media:video\b[^>]*>.*?</media:video>)', "media_video"),
+            (r'(<sec\b[^>]*>.*?</sec>)', "sec"),
             (r'(<p\b[^>]*>.*?</p>)', "p"),
             (r'(<ent\b[^>]*>.*?</ent>)', "ent")
         ]
 
-        for regex_str, tag_kind in patterns:
-            match = re.search(regex_str, self.buffer, re.DOTALL)
-            if match:
-                raw_block = match.group(1)
-                # Parse block safely wrapped in doc
+        found_any = True
+        while found_any:
+            found_any = False
+            earliest_match = None
+            earliest_span = None
+
+            for regex_str, tag_kind in patterns:
+                match = re.search(regex_str, self.buffer, re.DOTALL)
+                if match:
+                    span = match.span(1)
+                    if earliest_span is None or span[0] < earliest_span[0]:
+                        earliest_match = match.group(1)
+                        earliest_span = span
+
+            if earliest_match and earliest_span:
+                raw_block = earliest_match
+                start_idx, end_idx = earliest_span
                 wrapped = f"<doc id='stream'>{raw_block}</doc>"
                 try:
                     temp_doc = AIDFParser.parse(wrapped)
@@ -68,7 +83,9 @@ class AIDFStreamingParser:
                         if isinstance(closed_node, ToolActionNode) and self.on_tool_ready:
                             self.on_tool_ready(closed_node)
 
-                        # Remove parsed block from buffer so it doesn't fire again
-                        self.buffer = self.buffer.replace(raw_block, "", 1)
+                        # Remove parsed block safely by exact slice index to prevent duplicate stripping
+                        self.buffer = self.buffer[:start_idx] + self.buffer[end_idx:]
+                        found_any = True
                 except Exception:
-                    pass
+                    # If this block failed to parse, skip past it or break
+                    break

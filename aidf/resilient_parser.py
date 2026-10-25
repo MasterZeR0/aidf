@@ -314,12 +314,31 @@ class ResilientAIDFParser:
                     columns.append(TableColumn(name=name, dtype=dtype, unit=unit))
 
             rows = []
-            raw_text = (elem.text or "").strip()
-            for line in raw_text.splitlines():
-                line = line.strip()
-                if line.startswith("|") and line.endswith("|"):
-                    cells = [c.strip() for c in line[1:-1].split("|")]
-                    rows.append(cells)
+            row_elems = elem.findall("row")
+            if row_elems:
+                for r_elem in row_elems:
+                    r_text = (r_elem.text or "").strip()
+                    if r_text.startswith("[") and r_text.endswith("]"):
+                        try:
+                            parsed_row = json.loads(r_text)
+                            rows.append([str(c) for c in parsed_row])
+                            continue
+                        except Exception:
+                            pass
+                    cell_elems = r_elem.findall("c") or r_elem.findall("cell")
+                    if cell_elems:
+                        rows.append([(c.text or "").strip() for c in cell_elems])
+                    else:
+                        rows.append([c.strip() for c in r_text.split(",")])
+            else:
+                raw_text = (elem.text or "").strip()
+                for line in raw_text.splitlines():
+                    line = line.strip()
+                    if line.startswith("|") and line.endswith("|"):
+                        inner = line[1:-1]
+                        inner_safe = re.sub(r'\\\|', '___ESCAPED_PIPE___', inner)
+                        cells = [c.replace('___ESCAPED_PIPE___', '|').strip() for c in inner_safe.split("|")]
+                        rows.append(cells)
 
             return DataTableNode(id=node_id, prio=prio, columns=columns, rows=rows)
 

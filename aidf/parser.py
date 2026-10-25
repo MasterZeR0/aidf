@@ -20,14 +20,46 @@ def normalize_to_xml(aidf_text: str) -> str:
     """
     Normalizes compact AIDF shorthand into well-formed XML for the underlying AST parser:
     1. Escapes bare ampersands not already part of an XML entity
-    2. Quotes bracketed arrays: bbox=[0.1, 0.2] -> bbox="[0.1, 0.2]"
-    3. Quotes unquoted scalars: prio=1 -> prio="1"
-    4. Handles colon tags: <media:img> -> <media_img>
+    2. Protects CDATA / raw text blocks and escapes bare '<' in non-tag body text
+    3. Quotes bracketed arrays: bbox=[0.1, 0.2] -> bbox="[0.1, 0.2]"
+    4. Quotes unquoted scalars: prio=1 -> prio="1"
+    5. Handles colon tags: <media:img> -> <media_img>
     """
     # 1. Escape bare ampersands
     normalized = re.sub(r'&(?!(?:amp|lt|gt|apos|quot);)', '&amp;', aidf_text)
 
-    # 2. Quote bracketed arrays: key=[...] -> key="[...]"
+    # 2. Escape any '<' that is not part of a recognized AIDF tag or standard XML construct.
+    # Recognized AIDF tags: doc, meta, sec, p, ref, ent, code, caption, ocr, desc, transcript,
+    # speaker, row, c, cell, param, and namespaced tags (media:*, data:*, action:*, math:*).
+    tag_whitelist = (
+        r'doc|meta|sec|p|ref|ent|code|caption|ocr|desc|transcript|speaker|row|c|cell|param|'
+        r'(?:media|data|action|math|embed|src):[a-zA-Z_]\w*|[a-zA-Z_]\w*(?=\s+[^>]*>|\s*>)'
+    )
+    # A genuine tag starts with '<' followed optionally by '/', then a whitelisted tag name,
+    # followed by whitespace, '>', or '/>'
+    valid_tag_pattern = re.compile(
+        r'<\/?(?:'
+        r'doc|meta|sec|p|ref|ent|code|caption|ocr|desc|transcript|speaker|row|c|cell|param|src|embed|'
+        r'media:[a-zA-Z_]\w*|data:[a-zA-Z_]\w*|action:[a-zA-Z_]\w*|math:[a-zA-Z_]\w*'
+        r')(?:\s+[^>]*|\s*\/)?>',
+        re.IGNORECASE
+    )
+
+    # Tokenize input into valid tags and text segments to safely escape any other '<'
+    pos = 0
+    pieces = []
+    for m in valid_tag_pattern.finditer(normalized):
+        start, end = m.span()
+        if start > pos:
+            segment = normalized[pos:start]
+            pieces.append(segment.replace('<', '&lt;'))
+        pieces.append(m.group(0))
+        pos = end
+    if pos < len(normalized):
+        pieces.append(normalized[pos:].replace('<', '&lt;'))
+    normalized = "".join(pieces)
+
+    # 3. Quote bracketed arrays: key=[...] -> key="[...]"
     def quote_bracket(m):
         attr = m.group(1)
         arr = m.group(2)
@@ -35,7 +67,7 @@ def normalize_to_xml(aidf_text: str) -> str:
 
     normalized = re.sub(r'(\b[\w:]+)=(\[[^\]]*\])', quote_bracket, normalized)
 
-    # 3. Quote unquoted scalars: key=123 or key=abc -> key="123"
+    # 4. Quote unquoted scalars: key=123 or key=abc -> key="123"
     def quote_scalar(m):
         attr = m.group(1)
         val = m.group(2)
@@ -43,7 +75,7 @@ def normalize_to_xml(aidf_text: str) -> str:
 
     normalized = re.sub(r'(\b[\w:]+)=([^\s"\'<>]+)', quote_scalar, normalized)
 
-    # 4. Replace tag colons with underscores for XML parser
+    # 5. Replace tag colons with underscores for XML parser
     normalized = re.sub(r'<(/)?([\w]+):([\w]+)', r'<\1\2_\3', normalized)
     return normalized
 
@@ -156,12 +188,35 @@ class AIDFParser:
                     columns.append(TableColumn(name=name, dtype=dtype, unit=unit))
 
             rows = []
-            raw_text = (elem.text or "").strip()
-            for line in raw_text.splitlines():
-                line = line.strip()
-                if line.startswith("|") and line.endswith("|"):
-                    cells = [c.strip() for c in line[1:-1].split("|")]
-                    rows.append(cells)
+            # Check for structured <row> children (JSON array or cell tags)
+            row_elems = elem.findall("row")
+            if row_elems:
+                for r_elem in row_elems:
+                    r_text = (r_elem.text or "").strip()
+                    if r_text.startswith("[") and r_text.endswith("]"):
+                        try:
+                            parsed_row = json.loads(r_text)
+                            rows.append([str(c) for c in parsed_row])
+                            continue
+                        except Exception:
+                            pass
+                    # If not JSON, split by comma or cell elements
+                    cell_elems = r_elem.findall("c") or r_elem.findall("cell")
+                    if cell_elems:
+                        rows.append([(c.text or "").strip() for c in cell_elems])
+                    else:
+                        rows.append([c.strip() for c in r_text.split(",")])
+            else:
+                raw_text = (elem.text or "").strip()
+                for line in raw_text.splitlines():
+                    line = line.strip()
+                    if line.startswith("|") and line.endswith("|"):
+                        # Safe pipe extraction handling escaped pipes \|
+                        inner = line[1:-1]
+                        # Replace escaped pipes placeholder
+                        inner_safe = re.sub(r'\\\|', '___ESCAPED_PIPE___', inner)
+                        cells = [c.replace('___ESCAPED_PIPE___', '|').strip() for c in inner_safe.split("|")]
+                        rows.append(cells)
 
             return DataTableNode(id=node_id, prio=prio, columns=columns, rows=rows)
 

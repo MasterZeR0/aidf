@@ -11,6 +11,8 @@ from typing import Optional, Dict, Any
 
 from aidf.models import Document, Node, ToolActionNode
 from aidf.parser import AIDFParser
+from aidf.resilient_parser import ResilientAIDFParser
+from aidf.markdown_renderer import AIDFMarkdownRenderer
 from aidf.compact import CompactAIDFSerializer
 
 # System prompt that instructs any LLM to speak and egress native AIDF
@@ -87,6 +89,6 @@ Respond strictly in valid AIDF markup starting with <doc> and ending with </doc>
         cleaned = re.sub(r"^```(?:aidf|xml)?\s*", "", raw_output, flags=re.MULTILINE)
         cleaned = re.sub(r"\s*```$", "", cleaned, flags=re.MULTILINE).strip()
 
-        # Parse LLM egress back into AST
-        egress_doc = AIDFParser.parse(cleaned)
+        # Parse LLM egress back into AST with resilient parser to survive formatting flaws
+        egress_doc = ResilientAIDFParser.parse(cleaned)
         return egress_doc

@@ -20,6 +20,7 @@ from aidf.models import (
 )
 from aidf.parser import AIDFParser, AIDFSerializer
 from aidf.resilient_parser import ResilientAIDFParser
+from aidf.markdown_renderer import AIDFMarkdownRenderer
 from aidf.storage import AIDFStorageBackend, InMemoryAIDFStore
 
 __all__ = [
@@ -40,6 +41,7 @@ __all__ = [
     "AIDFParser",
     "AIDFSerializer",
     "ResilientAIDFParser",
+    "AIDFMarkdownRenderer",
     "AIDFStorageBackend",
     "InMemoryAIDFStore",
 ]

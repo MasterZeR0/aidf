@@ -9,6 +9,7 @@ from pathlib import Path
 from aidf.models import Document
 from aidf.parser import AIDFParser, AIDFSerializer
 from aidf.converter import MarkdownToAIDFConverter
+from aidf.markdown_renderer import AIDFMarkdownRenderer
 
 
 def main():
@@ -30,6 +31,12 @@ def main():
     # Validate AIDF
     val_parser = subparsers.add_parser("validate", help="Validate an AIDF document")
     val_parser.add_argument("input_file", help="Input AIDF file (.aidf)")
+
+    # Render AIDF to Markdown
+    render_parser = subparsers.add_parser("render", help="Render AIDF AST to clean Markdown for prompt context")
+    render_parser.add_argument("input_file", help="Input AIDF file (.aidf)")
+    render_parser.add_argument("--max-prio", type=int, default=2, help="Max priority tier to include")
+    render_parser.add_argument("-o", "--output", help="Output Markdown file (.md)")
 
     args = parser.parse_args()
 
@@ -58,6 +65,21 @@ def main():
         content = Path(args.input_file).read_text(encoding="utf-8")
         try:
             doc = AIDFParser.parse(content)
+            print(f"✅ Valid AIDF: {doc.id} ({len(doc.children)} root nodes)")
+        except Exception as e:
+            print(f"❌ Validation failed: {e}")
+            sys.exit(1)
+
+    elif args.command == "render":
+        content = Path(args.input_file).read_text(encoding="utf-8")
+        doc = AIDFParser.parse(content)
+        pruned = doc.prune(max_prio=args.max_prio)
+        md = AIDFMarkdownRenderer.render(pruned)
+        if args.output:
+            Path(args.output).write_text(md, encoding="utf-8")
+            print(f"✨ Rendered Markdown (prio<={args.max_prio}) -> {args.output}")
+        else:
+            print(md)
             print(f"✅ Valid AIDF document: id='{doc.id}', sections/nodes={len(doc.children)}")
         except Exception as e:
             print(f"❌ AIDF Validation Error: {e}", file=sys.stderr)
