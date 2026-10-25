@@ -1,0 +1,14 @@
+<doc id="doc-1" prio=1 lang="en">
+  <sec id="sec-project-roadmap-architecture" title="Project Roadmap & Architecture" prio=1>
+    <p id="p-1" prio=2>Overview of quarterly milestones and targets.</p>
+  </sec>
+  <sec id="sec-backend-performance" title="Backend Performance" prio=1>
+    <p id="p-2" prio=2>The database migration was completed with zero downtime.</p>
+    <data:table id="tbl-1" cols="Endpoint:str, P95 Latency:str, Error Rate:str" prio=2>
+      | /api/v1/search | 45ms | 0.00% |
+    </data:table>
+  </sec>
+  <sec id="sec-secondary-notes" title="Secondary Notes" prio=1>
+    <p id="p-3" prio=2>Non-critical documentation notes for testing.</p>
+  </sec>
+</doc>
